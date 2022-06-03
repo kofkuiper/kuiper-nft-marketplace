@@ -14,13 +14,13 @@ interface IKuiperNFTFactory {
         uint256 _royaltyFee
     ) external;
 
-    function isKuiperNFT(address _nft) external view returns(bool);
-
+    function isKuiperNFT(address _nft) external view returns (bool);
 }
 
 interface IKuiperNFT {
     function getRoyaltyFee() external view returns (uint256);
-    function getRoyaltyRecipient() external view returns(address);
+
+    function getRoyaltyRecipient() external view returns (address);
 }
 
 /* Kuiper NFT Marketplace
@@ -235,6 +235,7 @@ contract KuiperNFTMarketplace is Ownable, ReentrancyGuard {
     ) external isKuiperNFT(_nft) isPayableToken(_payToken) {
         IERC721 nft = IERC721(_nft);
         require(nft.ownerOf(_tokenId) == msg.sender, "not nft owner");
+        nft.transferFrom(msg.sender, address(this), _tokenId);
 
         listNfts[_nft][_tokenId] = ListNFT({
             nft: _nft,
@@ -255,6 +256,7 @@ contract KuiperNFTMarketplace is Ownable, ReentrancyGuard {
     {
         ListNFT memory listedNFT = listNfts[_nft][_tokenId];
         require(listedNFT.seller == msg.sender, "not listed owner");
+        IERC721(_nft).transferFrom(address(this), msg.sender, _tokenId);
         delete listNfts[_nft][_tokenId];
     }
 
@@ -412,24 +414,16 @@ contract KuiperNFTMarketplace is Ownable, ReentrancyGuard {
             uint256 royaltyTotal = calculateRoyalty(royaltyFee, offerPrice);
 
             // Transfer royalty fee to collection owner
-            payToken.transferFrom(
-                address(this),
-                royaltyRecipient,
-                royaltyTotal
-            );
+            payToken.transfer(royaltyRecipient, royaltyTotal);
             totalPrice -= royaltyTotal;
         }
 
         // Calculate & Transfer platfrom fee
         uint256 platformFeeTotal = calculatePlatformFee(offerPrice);
-        payToken.transferFrom(address(this), feeRecipient, platformFeeTotal);
+        payToken.transfer(feeRecipient, platformFeeTotal);
 
         // Transfer to seller
-        payToken.transferFrom(
-            address(this),
-            list.seller,
-            totalPrice - platformFeeTotal
-        );
+        payToken.transfer(list.seller, totalPrice - platformFeeTotal);
 
         // Transfer NFT to offerer
         IERC721(list.nft).safeTransferFrom(
@@ -460,7 +454,7 @@ contract KuiperNFTMarketplace is Ownable, ReentrancyGuard {
     ) external isPayableToken(_payToken) isNotAuction(_nft, _tokenId) {
         IERC721 nft = IERC721(_nft);
         require(nft.ownerOf(_tokenId) == msg.sender, "not nft owner");
-        require(_startTime > 0 && _endTime > _startTime, "invalid end time");
+        require(_endTime > _startTime, "invalid end time");
 
         nft.transferFrom(msg.sender, address(this), _tokenId);
 
@@ -536,7 +530,7 @@ contract KuiperNFTMarketplace is Ownable, ReentrancyGuard {
             uint256 lastBidPrice = auction.heighestBid;
 
             // Transfer back to last bidder
-            payToken.transferFrom(address(this), lastBidder, lastBidPrice);
+            payToken.transfer(lastBidder, lastBidPrice);
         }
 
         // Set new heighest bid price
@@ -547,10 +541,8 @@ contract KuiperNFTMarketplace is Ownable, ReentrancyGuard {
     }
 
     // @notice Result auction, can call by auction creator, heighest bidder, or marketplace owner only!
-    function resultAuction(address _nft, uint256 _tokenId)
-        external
-        isAuction(_nft, _tokenId)
-    {
+    function resultAuction(address _nft, uint256 _tokenId) external {
+        require(!auctionNfts[_nft][_tokenId].success, "already resulted");
         require(
             msg.sender == owner() ||
                 msg.sender == auctionNfts[_nft][_tokenId].creator ||
@@ -559,7 +551,7 @@ contract KuiperNFTMarketplace is Ownable, ReentrancyGuard {
         );
         require(
             block.timestamp > auctionNfts[_nft][_tokenId].endTime,
-            "auction ended"
+            "auction not ended"
         );
 
         AuctionNFT storage auction = auctionNfts[_nft][_tokenId];
@@ -580,24 +572,16 @@ contract KuiperNFTMarketplace is Ownable, ReentrancyGuard {
             uint256 royaltyTotal = calculateRoyalty(royaltyFee, heighestBid);
 
             // Transfer royalty fee to collection owner
-            payToken.transferFrom(
-                address(this),
-                royaltyRecipient,
-                royaltyTotal
-            );
+            payToken.transfer(royaltyRecipient, royaltyTotal);
             totalPrice -= royaltyTotal;
         }
 
         // Calculate & Transfer platfrom fee
         uint256 platformFeeTotal = calculatePlatformFee(heighestBid);
-        payToken.transferFrom(address(this), feeRecipient, platformFeeTotal);
+        payToken.transfer(feeRecipient, platformFeeTotal);
 
         // Transfer to auction creator
-        payToken.transferFrom(
-            address(this),
-            auction.creator,
-            totalPrice - platformFeeTotal
-        );
+        payToken.transfer(auction.creator, totalPrice - platformFeeTotal);
 
         // Transfer NFT to the winner
         nft.transferFrom(address(this), auction.lastBidder, auction.tokenId);
@@ -638,6 +622,14 @@ contract KuiperNFTMarketplace is Ownable, ReentrancyGuard {
 
     function getPayableTokens() external view returns (address[] memory) {
         return tokens;
+    }
+
+    function checkIsPayableToken(address _payableToken)
+        external
+        view
+        returns (bool)
+    {
+        return payableToken[_payableToken];
     }
 
     function addPayableToken(address _token) external onlyOwner {
